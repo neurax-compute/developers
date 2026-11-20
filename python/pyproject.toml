@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neurax"
+version = "1.0.0"
+description = "Official Python client for the NEURAX Compute API (sovereign and verifiable distributed computing)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Swiss Group Network SNC", email = "info@swissgroupnetwork.ch" }]
+classifiers = ["Programming Language :: Python :: 3", "License :: OSI Approved :: MIT License", "Topic :: Office/Business :: Financial"]
+
+[project.optional-dependencies]
+verify = ["cryptography>=41"]
+
+[project.urls]
+Homepage = "https://neuraxcopute.it"
+Documentation = "https://neuraxcopute.it/sviluppatori"

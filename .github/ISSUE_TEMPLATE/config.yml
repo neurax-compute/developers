@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: API documentation
+    url: https://neuraxcopute.it/sviluppatori
+    about: Read the full documentation first
+  - name: Security issues
+    url: mailto:info@swissgroupnetwork.ch
+    about: Do not open public issues for vulnerabilities

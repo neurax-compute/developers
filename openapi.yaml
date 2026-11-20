@@ -1,0 +1,133 @@
+openapi: 3.1.0
+info:
+  title: NEURAX Compute API
+  version: "1.2.0"
+  description: |
+    Public API of NEURAX Compute (v1): sovereign and verifiable distributed computing.
+    Authentication: `Authorization: Bearer nxk_...` (API key, created in the customer portal).
+    Amounts: euro strings with 6 decimals (`*_eur`) and integers in micro-euro (`*_micro_eur`, 1 EUR = 1,000,000).
+    Errors: `{"error":{"code":"...","message":"..."}}`. Rely on `code`, which is stable; `message` is currently in Italian.
+    Full documentation: https://neuraxcopute.it/sviluppatori
+servers:
+  - url: https://api.neuraxcopute.it
+components:
+  securitySchemes:
+    apiKey: { type: http, scheme: bearer }
+    session: { type: apiKey, in: cookie, name: nx_session }
+  schemas:
+    BSParams:
+      type: object
+      required: [spot, strike, volatility, maturity_years, paths]
+      properties:
+        spot: { type: number, exclusiveMinimum: 0, maximum: 10000000 }
+        strike: { type: number, exclusiveMinimum: 0, maximum: 10000000 }
+        rate: { type: number, minimum: -1, maximum: 1 }
+        volatility: { type: number, exclusiveMinimum: 0, maximum: 5 }
+        maturity_years: { type: number, exclusiveMinimum: 0, maximum: 50 }
+        option_type: { type: string, enum: [call, put], default: call }
+        paths: { type: integer, minimum: 1000, maximum: 20000000000 }
+        seed: { type: integer, description: "0 or absent = random" }
+        blocks: { type: integer, minimum: 1, maximum: 4096, description: "default: 1 block per million paths" }
+    Job:
+      type: object
+      properties:
+        id: { type: string }
+        workload: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, canceled] }
+        attempts: { type: integer }
+        units: { type: integer }
+        cost_eur: { type: string }
+        cost_micro_eur: { type: integer }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+        result_available: { type: boolean }
+        fail_reason: { type: string }
+        events: { type: array, items: { type: object } }
+    Result:
+      type: object
+      properties:
+        job_id: { type: string }
+        price: { type: number }
+        std_error: { type: number }
+        confidence_99: { type: array, items: { type: number }, minItems: 2, maxItems: 2 }
+        black_scholes_exact: { type: number }
+        output_sha256: { type: string }
+        node_signature: { type: string, description: "signature of the node over job, token and hash" }
+        executed_by_node: { type: string }
+        output: { type: object }
+security: [{ apiKey: [] }, { session: [] }]
+paths:
+  /v1/info:
+    get: { security: [], summary: Version, prices and CA fingerprint, responses: { "200": { description: ok } } }
+  /v1/auth/signup:
+    post:
+      security: []
+      summary: Sign up as a company (customer) or as a node owner (contributor)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, name, email, password, accept_terms]
+              properties:
+                role: { type: string, enum: [customer, contributor] }
+                name: { type: string, maxLength: 120 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12 }
+                accept_terms: { type: boolean, const: true }
+      responses: { "201": { description: created, sets the session cookie }, "409": { description: email already registered } }
+  /v1/auth/login:
+    post: { security: [], summary: Log in (locked after 10 failures in 15 minutes), responses: { "200": { description: ok }, "401": { description: wrong credentials }, "429": { description: locked } } }
+  /v1/auth/logout: { post: { summary: Log out, responses: { "200": { description: ok } } } }
+  /v1/me: { get: { summary: Profile and balances, responses: { "200": { description: ok } } } }
+  /v1/keys:
+    get: { summary: List API keys, responses: { "200": { description: ok } } }
+    post: { summary: Create an API key (shown only once), responses: { "201": { description: created } } }
+  /v1/keys/{id}:
+    delete: { summary: Revoke a key, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: revoked } } }
+  /v1/jobs:
+    post:
+      summary: Submit a job. The cost is reserved and charged only if the result is verified.
+      parameters: [{ name: Idempotency-Key, in: header, schema: { type: string, maxLength: 100 } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workload, params]
+              properties:
+                workload: { type: string, enum: [bs-mc-european@1, mc-exotic@1, mc-var@1, hist-var@1, matmul@1] }
+                params: { type: object, description: "computation parameters; see /v1/workloads and BSParams" }
+                region: { type: string, enum: ["", EUROPE, CH], description: "execution boundary (country of the node's IP address, detected by Cloudflare)" }
+                sovereign: { type: boolean, description: "verified partners only; requires region" }
+                confidential: { type: boolean, description: "certified nodes under a confidentiality agreement only" }
+      responses:
+        "201": { description: accepted, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } }
+        "400": { description: invalid parameters }
+        "402": { description: insufficient credit }
+        "429": { description: quota or rate limit }
+    get: { summary: List jobs (last 200), responses: { "200": { description: ok } } }
+  /v1/jobs/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Status and execution log, responses: { "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Job" } } } } } }
+    delete: { summary: Cancel (reservation refunded), responses: { "200": { description: canceled }, "409": { description: already finished } } }
+  /v1/jobs/{id}/result:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get: { summary: Verified result, responses: { "200": { description: ok, content: { application/json: { schema: { $ref: "#/components/schemas/Result" } } } }, "409": { description: not ready yet } } }
+  /v1/billing: { get: { summary: Company balances and transactions, responses: { "200": { description: ok } } } }
+  /v1/workloads: { get: { security: [], summary: Available computations with description and example parameters, responses: { "200": { description: ok } } } }
+  /v1/quote: { post: { security: [], summary: "Quote {workload, params} without submitting the job", responses: { "200": { description: ok } } } }
+  /v1/network/stats: { get: { security: [], summary: "Live network status and last 15 minutes (real data)", responses: { "200": { description: ok } } } }
+  /v1/payments/checkout: { post: { summary: "Top up credit with Stripe Checkout {amount_eur} -> checkout_url", responses: { "201": { description: created } } } }
+  /v1/jobs/{id}/evidence:
+    get: { summary: "Signed evidence file (ECDSA P-256) of the job", parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { description: "{evidence, algorithm, key_sha256, signature}" } } }
+  /v1/evidence/key: { get: { security: [], summary: PEM public key that signs evidence files, responses: { "200": { description: pem } } } }
+  /v1/evidence/verify: { post: { security: [], summary: "Authenticity check: post the evidence file exactly as downloaded -> {authentic}", responses: { "200": { description: ok } } } }
+  /v1/edge/functions: { get: { security: [], summary: NEURAX Edge functions with prices and examples, responses: { "200": { description: ok } } } }
+  /v1/edge/run:
+    post:
+      summary: "Instant call {function, input, region?, near?: {lat, lon}, timeout_ms?}"
+      responses: { "200": { description: "{output, latency_ms, path, audited, price_eur, bounced}" }, "409": { description: no node inside the boundary }, "504": { description: timed out } }
+  /v1/edge/recent: { get: { summary: "Latest calls and state of the NEURAX Bounce model", responses: { "200": { description: ok } } } }
+  /v1/network/map: { get: { security: [], summary: "Network map: counts per country and city (real data)", responses: { "200": { description: ok } } } }
+# Workloads: bs-mc-european@1, mc-exotic@1, mc-var@1, hist-var@1, matmul@1 (parameters in /v1/workloads).
